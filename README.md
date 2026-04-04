@@ -219,4 +219,4 @@ Outputs are generated under `agent-output/`.
 
 ## License
 
-No license file has been added yet. If you plan public reuse, add a license (MIT/Apache-2.0/etc.).
+Licensed under Apache License 2.0. See `LICENSE`.
