@@ -1,0 +1,19 @@
+{
+  "name": "sparkypalos",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "agents": "node scripts/run-agents.mjs",
+    "test": "node --test",
+    "security:scan-staged": "bash scripts/check-secrets-staged.sh",
+    "setup:hooks": "git config core.hooksPath .githooks"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.0.1",
+    "express": "^4.19.2"
+  }
+}

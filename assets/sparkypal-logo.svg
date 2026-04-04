@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="SparkyPalOS">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#14285f"/>
+      <stop offset="100%" stop-color="#0f1b4a"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#92f5d2"/>
+      <stop offset="100%" stop-color="#5ea4ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="62" height="62" rx="16" fill="url(#bg)" stroke="#253a77" stroke-width="2"/>
+  <circle cx="32" cy="32" r="16" fill="#071a56"/>
+  <circle cx="32" cy="32" r="8" fill="#04113c"/>
+  <ellipse cx="31.5" cy="31" rx="24" ry="10" fill="none" stroke="url(#ring)" stroke-width="3.2" transform="rotate(28 31.5 31)"/>
+  <ellipse cx="34" cy="34" rx="18" ry="7" fill="none" stroke="#68d3ff" stroke-width="2.2" transform="rotate(-18 34 34)"/>
+  <circle cx="46" cy="34" r="3.1" fill="#78d5ff"/>
+  <circle cx="15" cy="46" r="3.2" fill="#bdf95d"/>
+  <path d="M47 14l1.2 2.7 2.8.2-2.2 1.8.8 2.7-2.5-1.4-2.4 1.4.8-2.7-2.2-1.8 2.8-.2z" fill="#ffe999"/>
+</svg>
