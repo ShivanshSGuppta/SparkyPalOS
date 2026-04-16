@@ -10,16 +10,22 @@ SparkyPalOS is a retro desktop-style web OS experience.
 
 Captured from a real local run at `http://localhost:8787` on April 16, 2026.
 
-### 1) Desktop overview after boot/login
+### 1) Boot loading screen (startup)
+![Boot loading screen](assets/screenshots/00-loading-screen.png)
+
+### 2) Desktop overview after boot/login
 ![Desktop overview](assets/screenshots/01-desktop-overview.png)
 
-### 2) Calculator + Math Solver interaction
+### 3) Calculator + Math Solver interaction
 ![Calculator and Math Solver](assets/screenshots/02-calculator-mathsolver.png)
 
-### 3) Notepad save flow + System explorer
+### 4) Notepad save flow + System explorer
 ![Notepad and System](assets/screenshots/03-notepad-system.png)
 
-### 4) Tablet responsive layout
+### 5) Virtual PC game window (retro cartridge loaded)
+![Virtual PC game window](assets/screenshots/04-virtual-pc-game.png)
+
+### 6) Tablet responsive layout
 ![Tablet responsive view](assets/screenshots/04-tablet-responsive.png)
 
 ## Architecture
