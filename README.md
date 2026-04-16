@@ -6,6 +6,22 @@ SparkyPalOS is a retro desktop-style web OS experience.
 - Backend: Node.js + Express API in `server/index.js`
 - Runtime default: `http://localhost:8787`
 
+## Live UI Screenshots (Localhost)
+
+Captured from a real local run at `http://localhost:8787` on April 16, 2026.
+
+### 1) Desktop overview after boot/login
+![Desktop overview](assets/screenshots/01-desktop-overview.png)
+
+### 2) Calculator + Math Solver interaction
+![Calculator and Math Solver](assets/screenshots/02-calculator-mathsolver.png)
+
+### 3) Notepad save flow + System explorer
+![Notepad and System](assets/screenshots/03-notepad-system.png)
+
+### 4) Tablet responsive layout
+![Tablet responsive view](assets/screenshots/04-tablet-responsive.png)
+
 ## Architecture
 
 ### Frontend
