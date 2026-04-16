@@ -231,14 +231,6 @@ docker compose -f docker-compose.prod.yml logs -f app
 - Upstream public providers may be temporarily unavailable.
 - Retry and inspect `/api/providers/diagnostics`.
 
-## Agent Pipeline Artifacts
-
-Run:
-```bash
-npm run agents
-```
-Outputs are generated under `agent-output/`.
-
 ## License
 
 Licensed under GNU AGPLv3. See `LICENSE`.
