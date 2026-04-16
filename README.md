@@ -6,7 +6,7 @@ SparkyPalOS is a retro desktop-style web OS experience.
 - Backend: Node.js + Express API in `server/index.js`
 - Runtime default: `http://localhost:8787`
 
-## Live UI Screenshots (Localhost)
+## Live UI Images (Localhost)
 
 Captured from a real local run at `http://localhost:8787` on April 16, 2026.
 
