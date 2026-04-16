@@ -241,4 +241,4 @@ Outputs are generated under `agent-output/`.
 
 ## License
 
-Licensed under Apache License 2.0. See `LICENSE`.
+Licensed under GNU AGPLv3. See `LICENSE`.
