@@ -29,7 +29,8 @@ import {
   getProviderDiagnostics,
   searchArxiv,
   getTopUsSongs,
-  searchCatalog
+  searchCatalog,
+  validateExternalReaderUrl
 } from './publicApiAdapters.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -213,7 +214,14 @@ process.stdout.write(out);
     };
 
   return await new Promise((resolve) => {
-    const child = spawn(runtime.cmd, runtime.args, { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const childEnv = {
+      PATH: process.env.PATH || '',
+      LANG: process.env.LANG || 'C.UTF-8',
+      SPK_CODE_B64: env.SPK_CODE_B64,
+      SPK_STDIN_B64: env.SPK_STDIN_B64,
+      SPK_OUTPUT_LIMIT: env.SPK_OUTPUT_LIMIT
+    };
+    const child = spawn(runtime.cmd, runtime.args, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
@@ -291,8 +299,16 @@ export function createApp() {
 
   const sessions = new Map();
   const ipBucket = new Map();
-  const rateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
-  const rateLimitMax = Number(process.env.RATE_LIMIT_MAX || 90);
+  const parsedRateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
+  const parsedRateLimitMax = Number(process.env.RATE_LIMIT_MAX || 90);
+  const parsedRateLimitMaxKeys = Number(process.env.RATE_LIMIT_MAX_KEYS || 10_000);
+  const parsedSessionTtlMs = Number(process.env.SESSION_TTL_MS || 1000 * 60 * 60 * 24);
+  const parsedMaxSessions = Number(process.env.MAX_SESSIONS || 2_000);
+  const rateLimitWindowMs = Number.isFinite(parsedRateLimitWindowMs) && parsedRateLimitWindowMs > 0 ? parsedRateLimitWindowMs : 60_000;
+  const rateLimitMax = Number.isFinite(parsedRateLimitMax) && parsedRateLimitMax > 0 ? parsedRateLimitMax : 90;
+  const rateLimitMaxKeys = Number.isFinite(parsedRateLimitMaxKeys) && parsedRateLimitMaxKeys > 100 ? parsedRateLimitMaxKeys : 10_000;
+  const sessionTtlMs = Number.isFinite(parsedSessionTtlMs) && parsedSessionTtlMs > 0 ? parsedSessionTtlMs : 1000 * 60 * 60 * 24;
+  const maxSessions = Number.isFinite(parsedMaxSessions) && parsedMaxSessions > 10 ? parsedMaxSessions : 2_000;
 
   function now() {
     return Date.now();
@@ -306,20 +322,37 @@ export function createApp() {
     return next;
   }
 
+  function trimRateBucket() {
+    if (ipBucket.size <= rateLimitMaxKeys) return;
+    const keysByOldest = Array.from(ipBucket.entries())
+      .map(([key, value]) => ({ key, lastSeen: value[value.length - 1] || 0 }))
+      .sort((a, b) => a.lastSeen - b.lastSeen);
+    const removeCount = Math.max(1, ipBucket.size - rateLimitMaxKeys);
+    for (let i = 0; i < removeCount; i += 1) {
+      ipBucket.delete(keysByOldest[i].key);
+    }
+  }
+
   function rateLimit(req, res, next) {
-    const ip = req.headers['x-forwarded-for']?.toString().split(',')[0]?.trim() || req.socket.remoteAddress || 'local';
+    const ip = req.ip || req.socket.remoteAddress || 'local';
     const entries = cleanupRateBucket(ip);
     if (entries.length >= rateLimitMax) {
       return res.status(429).json({ error: 'rate_limited', message: 'Too many requests, retry later.' });
     }
     entries.push(now());
     ipBucket.set(ip, entries);
+    trimRateBucket();
     return next();
   }
 
   function requireAuth(req, res, next) {
-    const requiredToken = process.env.AUTH_TOKEN;
-    if (!requiredToken) return next();
+    const requiredToken = process.env.AUTH_TOKEN?.toString().trim();
+    if (!requiredToken) {
+      if (isProduction) {
+        return res.status(503).json({ error: 'server_misconfigured', message: 'AUTH_TOKEN is required in production.' });
+      }
+      return next();
+    }
 
     const auth = req.headers.authorization || '';
     const incoming = auth.startsWith('Bearer ') ? auth.slice(7) : '';
@@ -327,6 +360,11 @@ export function createApp() {
       return res.status(401).json({ error: 'unauthorized', message: 'Missing or invalid token.' });
     }
     return next();
+  }
+
+  function requireSensitiveAuth(req, res, next) {
+    if (!isProduction) return next();
+    return requireAuth(req, res, next);
   }
 
   function validateMessage(input) {
@@ -338,20 +376,40 @@ export function createApp() {
   }
 
   function getOrCreateSession(sessionId, username = 'USER') {
+    const currentTs = now();
+    for (const [key, value] of sessions.entries()) {
+      if (currentTs - (value.lastSeenAt || currentTs) > sessionTtlMs) {
+        sessions.delete(key);
+      }
+    }
+
+    if (sessions.size > maxSessions) {
+      const oldest = Array.from(sessions.entries())
+        .sort((a, b) => (a[1].lastSeenAt || 0) - (b[1].lastSeenAt || 0));
+      const removeCount = Math.max(1, sessions.size - maxSessions);
+      for (let i = 0; i < removeCount; i += 1) {
+        sessions.delete(oldest[i][0]);
+      }
+    }
+
     const id = sessionId || randomUUID();
     if (!sessions.has(id)) {
       sessions.set(id, {
         id,
         username,
         createdAt: new Date().toISOString(),
+        lastSeenAt: currentTs,
         history: []
       });
+    } else {
+      sessions.get(id).lastSeenAt = currentTs;
     }
     return sessions.get(id);
   }
 
   function appendHistory(session, role, content) {
     session.history.push({ role, content, ts: new Date().toISOString() });
+    session.lastSeenAt = now();
     if (session.history.length > 30) {
       session.history = session.history.slice(-30);
     }
@@ -462,7 +520,7 @@ export function createApp() {
     }
   });
 
-  app.get('/api/research/arxiv/read', rateLimit, async (req, res) => {
+  app.get('/api/research/arxiv/read', rateLimit, requireSensitiveAuth, async (req, res) => {
     try {
       const id = req.query.id?.toString() || '';
       const title = req.query.title?.toString() || '';
@@ -470,6 +528,12 @@ export function createApp() {
       const description = req.query.description?.toString() || '';
       if (!id && !title && !url && !description) {
         return res.status(400).json({ error: 'invalid_request', message: 'id, title, or url is required' });
+      }
+      if (url) {
+        const checkedUrl = validateExternalReaderUrl(url);
+        if (!checkedUrl.ok) {
+          return res.status(400).json({ error: 'invalid_request', message: `unsafe url: ${checkedUrl.reason}` });
+        }
       }
       const result = await getArxivReadContent({ id, title, url, description });
       return res.json({ ok: true, result });
@@ -521,7 +585,7 @@ export function createApp() {
     }
   });
 
-  app.post('/api/compiler/run', rateLimit, async (req, res) => {
+  app.post('/api/compiler/run', rateLimit, requireSensitiveAuth, async (req, res) => {
     try {
       const rawLanguage = req.body?.language?.toString() || '';
       const language = rawLanguage === 'python' ? 'python' : rawLanguage === 'javascript' ? 'javascript' : '';
@@ -552,7 +616,7 @@ export function createApp() {
     }
   });
 
-  app.get('/api/news/read', rateLimit, async (req, res) => {
+  app.get('/api/news/read', rateLimit, requireSensitiveAuth, async (req, res) => {
     try {
       const id = req.query.id?.toString() || '';
       const title = req.query.title?.toString() || '';
@@ -560,6 +624,12 @@ export function createApp() {
       const description = req.query.description?.toString() || '';
       if (!id && !title && !url) {
         return res.status(400).json({ error: 'invalid_request', message: 'id, title, or url is required' });
+      }
+      if (url) {
+        const checkedUrl = validateExternalReaderUrl(url);
+        if (!checkedUrl.ok) {
+          return res.status(400).json({ error: 'invalid_request', message: `unsafe url: ${checkedUrl.reason}` });
+        }
       }
       const result = await getNewsReadContent({ id, title, url, description });
       return res.json({ ok: true, result });
@@ -719,13 +789,19 @@ export function createApp() {
     }
   });
 
-  app.get('/api/anime/read', rateLimit, async (req, res) => {
+  app.get('/api/anime/read', rateLimit, requireSensitiveAuth, async (req, res) => {
     try {
       const id = req.query.id?.toString() || '';
       const title = req.query.title?.toString() || '';
       const textUrl = req.query.textUrl?.toString() || '';
       if (!id && !title && !textUrl) {
         return res.status(400).json({ error: 'invalid_request', message: 'id, title, or textUrl is required' });
+      }
+      if (textUrl) {
+        const checkedUrl = validateExternalReaderUrl(textUrl);
+        if (!checkedUrl.ok) {
+          return res.status(400).json({ error: 'invalid_request', message: `unsafe textUrl: ${checkedUrl.reason}` });
+        }
       }
       const item = await getAnimeReadContent({ id, title, textUrl });
       return res.json({ ok: true, result: item });
@@ -825,9 +901,18 @@ export function createApp() {
     }
   });
 
-  app.use(express.static(rootDir));
+  app.use('/assets', express.static(path.join(rootDir, 'assets'), {
+    dotfiles: 'ignore',
+    index: false,
+    immutable: true,
+    maxAge: isProduction ? '1h' : 0
+  }));
 
   app.get('/', (_req, res) => {
+    res.sendFile(path.join(rootDir, 'SparkyPalOS2.html'));
+  });
+
+  app.get('/SparkyPalOS2.html', (_req, res) => {
     res.sendFile(path.join(rootDir, 'SparkyPalOS2.html'));
   });
 
@@ -836,7 +921,7 @@ export function createApp() {
 
 export function startServer() {
   if (process.env.NODE_ENV === 'production') {
-    const required = ['CORS_ORIGINS'];
+    const required = ['CORS_ORIGINS', 'AUTH_TOKEN'];
     const missing = required.filter((key) => !process.env[key] || !process.env[key].trim());
     if (missing.length) {
       throw new Error(`Missing required production env vars: ${missing.join(', ')}`);

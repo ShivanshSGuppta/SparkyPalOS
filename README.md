@@ -38,7 +38,8 @@ Captured from a real local run at `http://localhost:8787` on April 16, 2026.
 ### Backend
 - Entry file: `server/index.js`
 - Express server serving:
-  - Static frontend (`/` -> `SparkyPalOS2.html`)
+  - Static frontend shell (`/` -> `SparkyPalOS2.html`)
+  - Static assets only from `/assets/*` (repo source folders are not publicly exposed)
   - REST APIs under `/api/*`
   - SSE streaming for AI (`/api/chat/stream`)
 - Adapter layer: `server/publicApiAdapters.js` (provider normalization and upstream fetches).
@@ -85,11 +86,14 @@ npm test
 | `LLM_BASE_URL` | No | `https://api.openai.com/v1` | LLM API base URL |
 | `LLM_MODEL` | No | `gpt-4o-mini` | Chat model |
 | `AGENT_MODEL` | No | `gpt-4o-mini` | Agent pipeline model |
-| `AUTH_TOKEN` | No | `my-bearer-token` | Enables Bearer auth on protected API routes |
+| `AUTH_TOKEN` | No | `my-bearer-token` | Enables Bearer auth; required in production |
 | `CORS_ORIGINS` | No | `http://localhost:8787` | Comma-separated allowed origins |
 | `REQUEST_SIZE_LIMIT` | No | `512kb` | Max request payload size |
 | `RATE_LIMIT_WINDOW_MS` | No | `60000` | Rate-limit window |
 | `RATE_LIMIT_MAX` | No | `90` | Max requests per window |
+| `RATE_LIMIT_MAX_KEYS` | No | `10000` | Max tracked IP buckets before LRU-style trim |
+| `SESSION_TTL_MS` | No | `86400000` | Session TTL for stale-session pruning |
+| `MAX_SESSIONS` | No | `2000` | Session count cap before oldest eviction |
 
 `*` Provide at least one of `OPENAI_API_KEY` or `LLM_API_KEY` for AI features.
 
@@ -104,7 +108,10 @@ npm test
 | `REQUEST_SIZE_LIMIT` | Recommended | `512kb` | Request body cap |
 | `RATE_LIMIT_WINDOW_MS` | Recommended | `60000` | Rate-limit window |
 | `RATE_LIMIT_MAX` | Recommended | `90` | Rate-limit ceiling |
-| `AUTH_TOKEN` | Recommended | `strong-token` | Bearer auth for protected routes |
+| `RATE_LIMIT_MAX_KEYS` | Recommended | `10000` | Max tracked IP buckets |
+| `SESSION_TTL_MS` | Recommended | `86400000` | Session TTL |
+| `MAX_SESSIONS` | Recommended | `2000` | Session cap |
+| `AUTH_TOKEN` | Yes | `strong-token` | Required bearer auth secret for sensitive routes |
 | `OPENAI_API_KEY` | Yes* | `sk-...` | Primary LLM credential |
 | `LLM_API_KEY` | Yes* | `sk-...` | Alternate LLM credential |
 | `LLM_MODEL` | No | `gpt-4o-mini` | Model override |
@@ -153,6 +160,80 @@ npm test
 - `GET /api/epics/ramayan/chapters`
 - `GET /api/epics/ramayan/read`
 
+### Production auth enforcement
+When `NODE_ENV=production`, these routes require `Authorization: Bearer <AUTH_TOKEN>`:
+- `POST /api/session`
+- `POST /api/chat`
+- `GET /api/chat/stream`
+- `POST /api/tools/:toolName`
+- `POST /api/compiler/run`
+- `GET /api/news/read`
+- `GET /api/anime/read`
+- `GET /api/research/arxiv/read`
+
+## Security Workflow
+
+### Runtime hardening highlights
+- SSRF guard on reader URL fetches (`news/anime/arXiv`): only `http/https`, no URL credentials, and private/local/link-local hosts are blocked.
+- Rate limiting keys on `req.ip` (trusted proxy aware), not user-controlled raw header parsing.
+- Static serving is locked to `/assets/*`; backend/tests/source paths are not publicly served.
+- Compiler sandbox subprocess receives minimal environment only (`PATH`, `LANG`, and required `SPK_*` values).
+- Session store includes TTL pruning and max-session cap.
+
+### Secret-safe git setup
+1. `.gitignore` excludes all real env files and local artifacts.
+2. `.env.example` and `.env.production.example` stay tracked.
+3. Pre-push secret scan blocks likely keys/tokens in staged changes.
+
+Enable hooks once per clone:
+```bash
+npm run setup:hooks
+```
+
+Manual scan (optional):
+```bash
+npm run security:scan-staged
+```
+
+## Production Deployment (Docker + Reverse Proxy)
+
+### Option A: Scripted deploy with rollback
+1. Configure production env:
+```bash
+cp .env.production.example .env.production
+```
+2. Fill required production values.
+3. Deploy:
+```bash
+./scripts/deploy-prod.sh
+```
+
+What this does:
+- Builds a release image
+- Starts app + nginx proxy from `docker-compose.prod.yml`
+- Health-checks `/api/health`
+- Rolls back to last healthy image if check fails
+
+### Option B: Direct compose
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```
+
+### Reverse proxy
+- Config file: `deploy/nginx.prod.conf`
+- Includes SSE-safe behavior for `/api/chat/stream`
+- Adds basic hardening headers (`X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`)
+
+## VPS Deployment Checklist
+
+1. Install Docker + Docker Compose plugin.
+2. Copy project to server.
+3. Set `.env.production` with domain-specific `CORS_ORIGINS`.
+4. Run `./scripts/deploy-prod.sh`.
+5. Put TLS in front (recommended: Cloudflare Tunnel, Caddy, or nginx with Let's Encrypt).
+6. Verify:
+   - `curl http://127.0.0.1/api/health`
+   - open app domain in browser
 ## Troubleshooting
 
 ### App opens but AI is unavailable
@@ -165,6 +246,10 @@ docker compose -f docker-compose.prod.yml logs -f app
 ### CORS errors from browser
 - Set exact frontend origin in `CORS_ORIGINS`.
 - Restart app after env updates.
+
+### Reader endpoint returns `invalid_request` unsafe URL
+- Reader fetches block localhost/private/internal targets by design.
+- Use public `http/https` article/text URLs only.
 
 ### SSE stream disconnects early
 - Ensure proxy uses provided `deploy/nginx.prod.conf`.

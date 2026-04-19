@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 const USER_AGENT = 'SparkyPalOS/1.0 (+local)';
 
 async function fetchJson(url, timeoutMs = 12000) {
@@ -44,6 +46,82 @@ function safeText(value) {
     .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
     .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
     .trim();
+}
+
+function parseIPv4(hostname = '') {
+  const parts = hostname.split('.');
+  if (parts.length !== 4) return null;
+  const octets = parts.map((part) => Number(part));
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    return null;
+  }
+  return octets;
+}
+
+function isPrivateIPv4(hostname = '') {
+  const octets = parseIPv4(hostname);
+  if (!octets) return false;
+  const [a, b] = octets;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  return false;
+}
+
+function isPrivateIPv6(hostname = '') {
+  const normalized = hostname.toLowerCase().split('%')[0];
+  if (!normalized) return true;
+  if (normalized === '::1' || normalized === '::') return true;
+  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
+  if (/^fe[89ab]/.test(normalized)) return true;
+  if (normalized.startsWith('::ffff:')) {
+    const mapped = normalized.slice(7);
+    return isPrivateIPv4(mapped);
+  }
+  return false;
+}
+
+function isBlockedHostname(hostname = '') {
+  const host = hostname.toLowerCase();
+  if (!host) return true;
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') || host.endsWith('.lan') || host.endsWith('.home')) {
+    return true;
+  }
+  const type = isIP(host);
+  if (type === 4) return isPrivateIPv4(host);
+  if (type === 6) return isPrivateIPv6(host);
+  return false;
+}
+
+export function validateExternalReaderUrl(rawUrl = '') {
+  const input = safeText(rawUrl);
+  if (!input) return { ok: false, reason: 'url is required', url: '' };
+
+  let parsed;
+  try {
+    parsed = new URL(input);
+  } catch {
+    return { ok: false, reason: 'invalid URL', url: '' };
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return { ok: false, reason: 'only http/https URLs are allowed', url: '' };
+  }
+
+  if (parsed.username || parsed.password) {
+    return { ok: false, reason: 'URL credentials are not allowed', url: '' };
+  }
+
+  if (isBlockedHostname(parsed.hostname)) {
+    return { ok: false, reason: 'private or local network URLs are blocked', url: '' };
+  }
+
+  return { ok: true, reason: '', url: parsed.toString() };
 }
 
 function splitIntoPages(text, maxLen = 320) {
@@ -1031,10 +1109,13 @@ function pickPublicDomainTextUrl(formats) {
 async function resolveAnimeReaderText({ id, title, textUrl = '' }) {
   let resolvedTitle = safeText(title) || 'Story';
   let source = 'anime-fallback';
-  let sourceUrl = safeText(textUrl);
+  const rawTextUrl = safeText(textUrl);
+  const textUrlValidation = rawTextUrl ? validateExternalReaderUrl(rawTextUrl) : { ok: false, reason: '', url: '' };
+  let sourceUrl = textUrlValidation.ok ? textUrlValidation.url : '';
   let storyText = '';
   let coverImage = '';
   let notes = '';
+  const blockedTextUrlReason = rawTextUrl && !textUrlValidation.ok ? textUrlValidation.reason : '';
 
   if (id?.startsWith('jikan-')) {
     const malId = id.replace('jikan-', '');
@@ -1050,7 +1131,7 @@ async function resolveAnimeReaderText({ id, title, textUrl = '' }) {
     }
   }
 
-  if (!textUrl) {
+  if (!rawTextUrl) {
     const query = encodeURIComponent((resolvedTitle || title || 'adventure').replace(/[^\p{L}\p{N}\s]/gu, ' ').trim());
     try {
       const gut = await fetchJson(`https://gutendex.com/books/?search=${query}&languages=en`, 16000);
@@ -1069,10 +1150,12 @@ async function resolveAnimeReaderText({ id, title, textUrl = '' }) {
     }
   } else {
     source = 'project-gutenberg';
-    try {
-      storyText = await fetchText(textUrl, 25000);
-    } catch {
-      storyText = '';
+    if (textUrlValidation.ok) {
+      try {
+        storyText = await fetchText(textUrlValidation.url, 25000);
+      } catch {
+        storyText = '';
+      }
     }
   }
 
@@ -1103,6 +1186,7 @@ async function resolveAnimeReaderText({ id, title, textUrl = '' }) {
     const fallbackStory = [
       `Title: ${resolvedTitle}`,
       notes || 'Synopsis unavailable from upstream source.',
+      blockedTextUrlReason ? `Blocked URL notice: ${blockedTextUrlReason}.` : '',
       'This in-app reading mode preserves your workflow by keeping all content inside SparkyPal Anime Reader window.',
       'Tip: Free complete story editions are sourced from public-domain libraries when available.'
     ].join('\n\n');
@@ -1555,10 +1639,10 @@ function htmlToReadableText(html = '') {
 }
 
 async function fetchJinaReadable(url = '') {
-  const safeUrl = safeText(url);
-  if (!safeUrl) return '';
+  const validated = validateExternalReaderUrl(url);
+  if (!validated.ok) return '';
   try {
-    const stripped = safeUrl.replace(/^https?:\/\//i, '');
+    const stripped = validated.url.replace(/^https?:\/\//i, '');
     const proxied = await fetchText(`https://r.jina.ai/http://${stripped}`, 18000);
     return safeText(proxied).replace(/\n{3,}/g, '\n\n').trim();
   } catch {
@@ -1568,8 +1652,11 @@ async function fetchJinaReadable(url = '') {
 
 export async function getNewsReadContent({ id = '', title = '', url = '', description = '' } = {}) {
   const safeTitle = safeText(title) || 'News Reader';
-  const safeUrl = safeText(url);
+  const rawUrl = safeText(url);
+  const urlValidation = rawUrl ? validateExternalReaderUrl(rawUrl) : { ok: false, reason: '', url: '' };
+  const safeUrl = urlValidation.ok ? urlValidation.url : '';
   const baseDescription = safeText(description).replace(/&nbsp;?/gi, ' ').replace(/\s+/g, ' ').trim();
+  const blockedUrlReason = rawUrl && !urlValidation.ok ? urlValidation.reason : '';
   let readable = baseDescription;
   try {
     if (safeUrl) {
@@ -1592,6 +1679,7 @@ export async function getNewsReadContent({ id = '', title = '', url = '', descri
       `Summary: ${baseDescription || 'Live update received from the wire feed.'}`,
       'Overview: This in-app briefing expands the available wire summary into a readable article format so users can continue reading inside SparkyPal without a forced redirect.',
       `Context: ${baseDescription || 'Upstream publishers can restrict full-text access or rely on script-rendered pages. SparkyPal keeps a resilient fallback narrative for uninterrupted in-app reading.'}`,
+      blockedUrlReason ? `Blocked URL notice: ${blockedUrlReason}.` : '',
       'What to watch next: Monitor official statements, follow-up reports, and verified data points as this story evolves.',
       safeUrl ? `Source URL retained for verification: ${safeUrl}` : ''
     ].filter(Boolean).join('\n\n');
@@ -1624,6 +1712,7 @@ export async function getArxivReadContent({ id = '', title = '', url = '', descr
   let blockText = '';
   let pageUrl = safeText(url);
   let paperTitle = fallbackTitle;
+  let blockedUrlReason = '';
   try {
     if (articleId) {
       const feed = await fetchText(`https://export.arxiv.org/api/query?id_list=${encodeURIComponent(articleId)}`, 16000);
@@ -1652,8 +1741,14 @@ export async function getArxivReadContent({ id = '', title = '', url = '', descr
     ].join('\n\n');
   }
 
-  if (blockText.length < 600 && pageUrl) {
-    const jina = await fetchJinaReadable(pageUrl);
+  const pageUrlValidation = pageUrl ? validateExternalReaderUrl(pageUrl) : { ok: false, reason: '', url: '' };
+  const safePageUrl = pageUrlValidation.ok ? pageUrlValidation.url : '';
+  if (pageUrl && !pageUrlValidation.ok) {
+    blockedUrlReason = pageUrlValidation.reason;
+  }
+
+  if (blockText.length < 600 && safePageUrl) {
+    const jina = await fetchJinaReadable(safePageUrl);
     if (jina.length > blockText.length) {
       blockText = [
         `Title: ${paperTitle}`,
@@ -1665,11 +1760,14 @@ export async function getArxivReadContent({ id = '', title = '', url = '', descr
   if (!blockText) {
     blockText = `${paperTitle}\n\nAbstract unavailable from upstream at the moment. SparkyPal keeps the built-in reader active with available metadata.`;
   }
+  if (blockedUrlReason) {
+    blockText = `${blockText}\n\nBlocked URL notice: ${blockedUrlReason}.`;
+  }
   return normalizeItem({
     id: id || `arxiv-read-${Date.now()}`,
     title: paperTitle,
     description: 'In-app research reader loaded.',
-    url: pageUrl,
+    url: safePageUrl,
     source: 'research-reader',
     tags: ['research', 'reader', 'in-app'],
     content: {

@@ -15,5 +15,8 @@
     "cors": "^2.8.5",
     "dotenv": "^17.0.1",
     "express": "^4.19.2"
+  },
+  "overrides": {
+    "path-to-regexp": "0.1.13"
   }
 }

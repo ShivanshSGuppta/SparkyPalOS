@@ -54,17 +54,52 @@ function parseSseEvents(text) {
   });
 }
 
-test('backend health, chat, and stream contracts', async () => {
-  const mockLlm = await startMockLlmServer();
-  process.env.LLM_BASE_URL = `http://127.0.0.1:${mockLlm.port}`;
-  process.env.LLM_API_KEY = 'test-key';
+function applyEnv(overrides) {
+  const keys = Object.keys(overrides);
+  const previous = {};
+  for (const key of keys) {
+    previous[key] = process.env[key];
+    const value = overrides[key];
+    if (value === undefined || value === null) {
+      delete process.env[key];
+    } else {
+      process.env[key] = String(value);
+    }
+  }
 
-  const { createApp } = await import('../server/index.js');
+  return () => {
+    for (const key of keys) {
+      if (previous[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = previous[key];
+      }
+    }
+  };
+}
+
+async function startBackend(createApp) {
   const app = createApp();
   const backend = app.listen(0);
   await new Promise((resolve) => backend.once('listening', resolve));
   const backendPort = backend.address().port;
   const base = `http://127.0.0.1:${backendPort}`;
+  return { backend, base };
+}
+
+test('backend health, chat, stream, and static/security contracts', async () => {
+  const restoreEnv = applyEnv({
+    NODE_ENV: 'development',
+    AUTH_TOKEN: undefined,
+    CORS_ORIGINS: undefined,
+    LLM_API_KEY: 'test-key'
+  });
+
+  const mockLlm = await startMockLlmServer();
+  process.env.LLM_BASE_URL = `http://127.0.0.1:${mockLlm.port}`;
+
+  const { createApp } = await import('../server/index.js');
+  const { backend, base } = await startBackend(createApp);
 
   try {
     const health = await fetch(`${base}/api/health`);
@@ -143,8 +178,103 @@ test('backend health, chat, and stream contracts', async () => {
     assert.equal(hasSessionEvent, true);
     assert.ok(tokenEvents.length >= 2);
     assert.equal(doneEvent?.data?.message, 'Hello world');
+
+    const blockedNewsUrl = await fetch(`${base}/api/news/read?title=Probe&url=${encodeURIComponent('http://127.0.0.1:8787/api/health')}`);
+    assert.equal(blockedNewsUrl.status, 400);
+
+    const blockedAnimeUrl = await fetch(`${base}/api/anime/read?title=Probe&textUrl=${encodeURIComponent('http://localhost:8787/api/health')}`);
+    assert.equal(blockedAnimeUrl.status, 400);
+
+    const blockedArxivUrl = await fetch(`${base}/api/research/arxiv/read?title=Probe&url=${encodeURIComponent('http://10.0.0.5/internal')}`);
+    assert.equal(blockedArxivUrl.status, 400);
+
+    const leakedServerFile = await fetch(`${base}/server/index.js`);
+    assert.notEqual(leakedServerFile.status, 200);
+
+    const iconAsset = await fetch(`${base}/assets/sparkypal-logo.svg`);
+    assert.equal(iconAsset.status, 200);
   } finally {
     await new Promise((resolve) => backend.close(resolve));
     await new Promise((resolve) => mockLlm.server.close(resolve));
+    restoreEnv();
+  }
+});
+
+test('rate limit is keyed by req.ip and resists x-forwarded-for spoofing', async () => {
+  const restoreEnv = applyEnv({
+    NODE_ENV: 'development',
+    AUTH_TOKEN: undefined,
+    RATE_LIMIT_WINDOW_MS: '60000',
+    RATE_LIMIT_MAX: '3'
+  });
+
+  const { createApp } = await import('../server/index.js');
+  const { backend, base } = await startBackend(createApp);
+
+  try {
+    const statuses = [];
+    for (let i = 0; i < 4; i += 1) {
+      const res = await fetch(`${base}/api/gita/chapters`, {
+        headers: { 'x-forwarded-for': `203.0.113.${10 + i}` }
+      });
+      statuses.push(res.status);
+    }
+
+    assert.deepEqual(statuses.slice(0, 3), [200, 200, 200]);
+    assert.equal(statuses[3], 429);
+  } finally {
+    await new Promise((resolve) => backend.close(resolve));
+    restoreEnv();
+  }
+});
+
+test('production enforces auth on sensitive routes and requires AUTH_TOKEN at startup', async () => {
+  const restoreEnv = applyEnv({
+    NODE_ENV: 'production',
+    CORS_ORIGINS: 'https://app.example',
+    AUTH_TOKEN: 'prod-secret',
+    RATE_LIMIT_WINDOW_MS: '60000',
+    RATE_LIMIT_MAX: '90'
+  });
+
+  const { createApp, startServer } = await import('../server/index.js');
+  const { backend, base } = await startBackend(createApp);
+
+  try {
+    const compilerNoAuth = await fetch(`${base}/api/compiler/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language: 'javascript', code: 'console.log("x")' })
+    });
+    assert.equal(compilerNoAuth.status, 401);
+
+    const compilerWithAuth = await fetch(`${base}/api/compiler/run`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer prod-secret'
+      },
+      body: JSON.stringify({ language: 'javascript', code: 'console.log("x")' })
+    });
+    assert.equal(compilerWithAuth.status, 200);
+
+    const newsNoAuth = await fetch(`${base}/api/news/read?title=ProtectedRead`);
+    assert.equal(newsNoAuth.status, 401);
+
+    const newsWithAuth = await fetch(`${base}/api/news/read?title=ProtectedRead`, {
+      headers: { Authorization: 'Bearer prod-secret' }
+    });
+    assert.equal(newsWithAuth.status, 200);
+
+    await new Promise((resolve) => backend.close(resolve));
+
+    const restoreMissingToken = applyEnv({ AUTH_TOKEN: undefined });
+    assert.throws(() => startServer(), /AUTH_TOKEN/);
+    restoreMissingToken();
+  } finally {
+    if (backend.listening) {
+      await new Promise((resolve) => backend.close(resolve));
+    }
+    restoreEnv();
   }
 });
