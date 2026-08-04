@@ -5,6 +5,9 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { randomUUID } from 'crypto';
+import { createSessionStore } from './sessionStore.js';
+import { captureException, getSentryExpressErrorHandler, initMonitoring, withRequestContext } from './monitoring.js';
+import { getPublicClientConfig, isSupabaseConfigured, validateSupabaseBearerToken } from './supabaseClient.js';
 import { generateChat, streamChat } from './llmAdapter.js';
 import {
   getCalendarEvents,
@@ -255,6 +258,7 @@ process.stdout.write(out);
 }
 
 export function createApp() {
+  initMonitoring();
   const app = express();
   const isProduction = process.env.NODE_ENV === 'production';
   const trustedProxy = process.env.TRUST_PROXY;
@@ -296,8 +300,8 @@ export function createApp() {
     credentials: false
   }));
   app.use(express.json({ limit: requestSizeLimit }));
+  app.use(withRequestContext);
 
-  const sessions = new Map();
   const ipBucket = new Map();
   const parsedRateLimitWindowMs = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
   const parsedRateLimitMax = Number(process.env.RATE_LIMIT_MAX || 90);
@@ -309,6 +313,7 @@ export function createApp() {
   const rateLimitMaxKeys = Number.isFinite(parsedRateLimitMaxKeys) && parsedRateLimitMaxKeys > 100 ? parsedRateLimitMaxKeys : 10_000;
   const sessionTtlMs = Number.isFinite(parsedSessionTtlMs) && parsedSessionTtlMs > 0 ? parsedSessionTtlMs : 1000 * 60 * 60 * 24;
   const maxSessions = Number.isFinite(parsedMaxSessions) && parsedMaxSessions > 10 ? parsedMaxSessions : 2_000;
+  const sessionStore = createSessionStore({ sessionTtlMs, maxSessions });
 
   function now() {
     return Date.now();
@@ -345,17 +350,26 @@ export function createApp() {
     return next();
   }
 
-  function requireAuth(req, res, next) {
+  async function requireAuth(req, res, next) {
     const requiredToken = process.env.AUTH_TOKEN?.toString().trim();
+    const auth = req.headers.authorization || '';
+    const incoming = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+
+    if (incoming && isSupabaseConfigured()) {
+      const tokenCheck = await validateSupabaseBearerToken(incoming);
+      if (tokenCheck.ok) {
+        req.authUser = tokenCheck.user;
+        req.authSource = `supabase-${tokenCheck.source}`;
+        return next();
+      }
+    }
+
     if (!requiredToken) {
       if (isProduction) {
-        return res.status(503).json({ error: 'server_misconfigured', message: 'AUTH_TOKEN is required in production.' });
+        return res.status(401).json({ error: 'unauthorized', message: 'Missing or invalid token.' });
       }
       return next();
     }
-
-    const auth = req.headers.authorization || '';
-    const incoming = auth.startsWith('Bearer ') ? auth.slice(7) : '';
     if (incoming !== requiredToken) {
       return res.status(401).json({ error: 'unauthorized', message: 'Missing or invalid token.' });
     }
@@ -373,46 +387,6 @@ export function createApp() {
     if (!msg) return 'message is required';
     if (msg.length > 4000) return 'message too long (max 4000 chars)';
     return null;
-  }
-
-  function getOrCreateSession(sessionId, username = 'USER') {
-    const currentTs = now();
-    for (const [key, value] of sessions.entries()) {
-      if (currentTs - (value.lastSeenAt || currentTs) > sessionTtlMs) {
-        sessions.delete(key);
-      }
-    }
-
-    if (sessions.size > maxSessions) {
-      const oldest = Array.from(sessions.entries())
-        .sort((a, b) => (a[1].lastSeenAt || 0) - (b[1].lastSeenAt || 0));
-      const removeCount = Math.max(1, sessions.size - maxSessions);
-      for (let i = 0; i < removeCount; i += 1) {
-        sessions.delete(oldest[i][0]);
-      }
-    }
-
-    const id = sessionId || randomUUID();
-    if (!sessions.has(id)) {
-      sessions.set(id, {
-        id,
-        username,
-        createdAt: new Date().toISOString(),
-        lastSeenAt: currentTs,
-        history: []
-      });
-    } else {
-      sessions.get(id).lastSeenAt = currentTs;
-    }
-    return sessions.get(id);
-  }
-
-  function appendHistory(session, role, content) {
-    session.history.push({ role, content, ts: new Date().toISOString() });
-    session.lastSeenAt = now();
-    if (session.history.length > 30) {
-      session.history = session.history.slice(-30);
-    }
   }
 
   async function weatherTool(args) {
@@ -455,12 +429,24 @@ export function createApp() {
   };
 
   app.get('/api/health', (_req, res) => {
+    const requestId = randomUUID();
     res.json({
       ok: true,
       service: 'sparky-backend',
       time: new Date().toISOString(),
-      sessions: sessions.size,
-      llmConfigured: Boolean(process.env.OPENAI_API_KEY || process.env.LLM_API_KEY)
+      sessions: sessionStore.getSessionCount(),
+      llmConfigured: Boolean(process.env.OPENAI_API_KEY || process.env.LLM_API_KEY),
+      source: process.env.VERCEL ? 'vercel' : 'node',
+      requestId,
+      degraded: false
+    });
+  });
+
+  app.get('/api/public-config', (_req, res) => {
+    res.json({
+      ok: true,
+      source: process.env.VERCEL ? 'vercel' : 'node',
+      result: getPublicClientConfig()
     });
   });
 
@@ -587,6 +573,9 @@ export function createApp() {
 
   app.post('/api/compiler/run', rateLimit, requireSensitiveAuth, async (req, res) => {
     try {
+      if (process.env.DISABLE_PUBLIC_COMPILER === '1' && !req.authUser?.app_metadata?.role) {
+        return res.status(403).json({ error: 'forbidden', message: 'Compiler is disabled in public mode.' });
+      }
       const rawLanguage = req.body?.language?.toString() || '';
       const language = rawLanguage === 'python' ? 'python' : rawLanguage === 'javascript' ? 'javascript' : '';
       const code = req.body?.code?.toString() || '';
@@ -811,14 +800,25 @@ export function createApp() {
   });
 
   app.post('/api/session', rateLimit, requireAuth, (req, res) => {
-    const { sessionId, username } = req.body || {};
-    const session = getOrCreateSession(sessionId, typeof username === 'string' && username.trim() ? username.trim() : 'USER');
-
-    return res.json({
-      sessionId: session.id,
-      username: session.username,
-      createdAt: session.createdAt,
-      historyCount: session.history.length
+    (async () => {
+      const { sessionId, username } = req.body || {};
+      const session = await sessionStore.getOrCreateSession({
+        sessionId,
+        username: typeof username === 'string' && username.trim() ? username.trim() : 'USER',
+        ownerId: req.authUser?.id || 'anon'
+      });
+      return res.json({
+        sessionId: session.id,
+        username: session.username,
+        createdAt: session.createdAt,
+        historyCount: session.history.length,
+        requestId: randomUUID(),
+        source: isSupabaseConfigured() ? 'supabase' : 'memory',
+        degraded: false
+      });
+    })().catch((error) => {
+      captureException(error, { route: '/api/session' });
+      return res.status(500).json({ error: 'session_failed', message: error.message });
     });
   });
 
@@ -828,18 +828,22 @@ export function createApp() {
       const invalid = validateMessage(message);
       if (invalid) return res.status(400).json({ error: 'invalid_request', message: invalid });
 
-      const session = getOrCreateSession(sessionId);
-      appendHistory(session, 'user', message.trim());
+      const session = await sessionStore.getOrCreateSession({ sessionId, ownerId: req.authUser?.id || 'anon' });
+      await sessionStore.appendHistory(session, 'user', message.trim());
 
       const assistant = await generateChat({ history: session.history, model });
-      appendHistory(session, 'assistant', assistant);
+      await sessionStore.appendHistory(session, 'assistant', assistant);
 
       return res.json({
         sessionId: session.id,
         message: assistant,
-        historyCount: session.history.length
+        historyCount: session.history.length,
+        requestId: randomUUID(),
+        source: isSupabaseConfigured() ? 'supabase' : 'memory',
+        degraded: false
       });
     } catch (error) {
+      captureException(error, { route: '/api/chat' });
       return res.status(500).json({ error: 'chat_failed', message: error.message });
     }
   });
@@ -854,8 +858,8 @@ export function createApp() {
       return res.status(400).json({ error: 'invalid_request', message: invalid });
     }
 
-    const session = getOrCreateSession(sessionId);
-    appendHistory(session, 'user', message.trim());
+    const session = await sessionStore.getOrCreateSession({ sessionId, ownerId: req.authUser?.id || 'anon' });
+    await sessionStore.appendHistory(session, 'user', message.trim());
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -875,16 +879,28 @@ export function createApp() {
         model,
         onToken: (token) => safeWrite('token', { token })
       });
-      appendHistory(session, 'assistant', full);
+      await sessionStore.appendHistory(session, 'assistant', full);
       safeWrite('done', { message: full, historyCount: session.history.length });
       res.end();
     } catch (error) {
-      safeWrite('error', { message: error.message || 'stream_failed' });
+      captureException(error, { route: '/api/chat/stream' });
+      try {
+        const fallback = await generateChat({ history: session.history, model });
+        await sessionStore.appendHistory(session, 'assistant', fallback);
+        safeWrite('fallback', { degraded: true, source: 'non-stream-chat' });
+        safeWrite('done', { message: fallback, historyCount: session.history.length, degraded: true });
+      } catch (fallbackError) {
+        captureException(fallbackError, { route: '/api/chat/stream:fallback' });
+        safeWrite('error', { message: fallbackError.message || error.message || 'stream_failed' });
+      }
       res.end();
     }
   });
 
   app.post('/api/tools/:toolName', rateLimit, requireAuth, async (req, res) => {
+    if (process.env.DISABLE_PUBLIC_TOOLS === '1' && !req.authUser?.app_metadata?.role) {
+      return res.status(403).json({ error: 'forbidden', message: 'Tools are disabled in public mode.' });
+    }
     const toolName = req.params.toolName;
     const policy = toolPolicies[toolName];
     const handler = toolHandlers[toolName];
@@ -897,6 +913,7 @@ export function createApp() {
       const result = await handler(req.body || {});
       return res.json({ ok: true, tool: toolName, result });
     } catch (error) {
+      captureException(error, { route: '/api/tools/:toolName', tool: toolName });
       return res.status(500).json({ error: 'tool_failed', message: error.message });
     }
   });
@@ -916,12 +933,17 @@ export function createApp() {
     res.sendFile(path.join(rootDir, 'SparkyPalOS2.html'));
   });
 
+  const sentryErrorHandler = getSentryExpressErrorHandler();
+  if (sentryErrorHandler) {
+    app.use(sentryErrorHandler);
+  }
+
   return app;
 }
 
 export function startServer() {
   if (process.env.NODE_ENV === 'production') {
-    const required = ['CORS_ORIGINS', 'AUTH_TOKEN'];
+    const required = ['CORS_ORIGINS'];
     const missing = required.filter((key) => !process.env[key] || !process.env[key].trim());
     if (missing.length) {
       throw new Error(`Missing required production env vars: ${missing.join(', ')}`);

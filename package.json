@@ -6,12 +6,15 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
+    "build:macos": "bash scripts/build-macos-app.sh",
     "agents": "node scripts/run-agents.mjs",
     "test": "node --test",
     "security:scan-staged": "bash scripts/check-secrets-staged.sh",
     "setup:hooks": "git config core.hooksPath .githooks"
   },
   "dependencies": {
+    "@sentry/node": "^10.53.1",
+    "@supabase/supabase-js": "^2.106.2",
     "cors": "^2.8.5",
     "dotenv": "^17.0.1",
     "express": "^4.19.2"

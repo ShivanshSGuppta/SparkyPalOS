@@ -29,10 +29,13 @@ coverage/
 .cache/
 .tmp/
 tmp/
+dist/
 *.tsbuildinfo
 
 # Deployment and local state
 .deploy-state/
+.vercel/
+.supabase/
 
 # Generated pipeline outputs
 agent-output/

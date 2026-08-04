@@ -6,6 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SparkyPalOS</title>
     <link rel="icon" type="image/svg+xml" href="/assets/sparkypal-logo.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@500;600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/bold/style.css">
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
@@ -13,13 +17,62 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+    <script src="https://unpkg.com/posthog-js@1.151.0/dist/module.no-external.js"></script>
+    <script src="https://browser.sentry-cdn.com/8.26.0/bundle.tracing.min.js" crossorigin="anonymous"></script>
     <!-- Babel for JSX compilation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
         body {
             margin: 0;
             overflow: hidden;
-            font-family: system-ui, -apple-system, sans-serif;
+            font-family: "Archivo", system-ui, -apple-system, sans-serif;
+            background: #f4f0e6;
+        }
+
+        button,
+        input,
+        textarea,
+        select {
+            font: inherit;
+        }
+
+        button:focus-visible,
+        input:focus-visible,
+        textarea:focus-visible,
+        select:focus-visible {
+            outline: 4px solid #00d9f5;
+            outline-offset: 2px;
+        }
+
+        .sp-display {
+            font-family: "Archivo Black", "Archivo", sans-serif;
+        }
+
+        .sp-mono {
+            font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+        }
+
+        .sp-desktop {
+            background-color: #f4f0e6;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-size: cover;
+        }
+
+        .sp-launcher {
+            width: min(1000px, calc(100vw - 240px));
+        }
+
+        .sp-launcher-results {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .sp-running-list {
+            scrollbar-width: none;
+        }
+
+        .sp-running-list::-webkit-scrollbar {
+            display: none;
         }
 
         .canvas-container {
@@ -41,21 +94,6 @@
             -webkit-overflow-scrolling: touch;
         }
 
-        .desktop-icon {
-            width: 96px;
-            touch-action: none;
-        }
-
-        .desktop-icon-tile {
-            width: 64px;
-            height: 64px;
-        }
-
-        .desktop-icon-label {
-            font-size: 12px;
-            line-height: 1.1;
-        }
-
         @media (max-width: 1024px) {
             .sp-window {
                 max-width: calc(100vw - 12px) !important;
@@ -66,32 +104,86 @@
                 padding: 12px !important;
             }
 
-            .desktop-icon {
-                width: 74px;
+            .sp-launcher {
+                width: min(760px, calc(100vw - 184px));
             }
 
-            .desktop-icon-tile {
-                width: 52px;
-                height: 52px;
+            .sp-launcher-results {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
             }
 
-            .desktop-icon-label {
-                font-size: 10px;
+            .sp-launcher-stage {
+                padding-left: 160px !important;
+            }
+
+            .sp-running-preview {
+                display: none !important;
             }
         }
 
-        @media (max-width: 768px) {
-            .desktop-icon {
-                width: 66px;
+        @media (max-width: 720px) {
+            .sp-launcher {
+                width: calc(100vw - 32px);
             }
 
-            .desktop-icon-tile {
-                width: 46px;
-                height: 46px;
+            .sp-pinned-rail {
+                left: 12px !important;
+                right: 12px;
+                top: 78px !important;
+                width: auto !important;
+                height: 68px !important;
+                flex-direction: row !important;
+                padding: 8px !important;
             }
 
-            .desktop-icon-label {
-                font-size: 9px;
+            .sp-pinned-rail .sp-rail-label,
+            .sp-pinned-rail .sp-all-apps-label {
+                display: none !important;
+            }
+
+            .sp-pinned-rail button {
+                min-width: 0;
+                min-height: 44px !important;
+                flex: 1 1 0;
+            }
+
+            .sp-pinned-rail button > span:first-child {
+                width: 44px !important;
+                height: 44px !important;
+            }
+
+            .sp-launcher-stage {
+                align-items: flex-start !important;
+                padding-top: 164px !important;
+                padding-left: 0 !important;
+            }
+
+            #spark-launcher-search {
+                font-size: 18px !important;
+            }
+
+            .sp-search-icon {
+                display: none !important;
+            }
+
+            .sp-launcher-searchbox {
+                min-height: 90px !important;
+            }
+
+            .sp-system-tray-date {
+                display: none !important;
+            }
+
+            .sp-launcher-results {
+                grid-template-columns: 1fr;
+            }
+
+            .sp-running-preview {
+                display: none !important;
+            }
+
+            .sp-running-label {
+                display: none !important;
             }
         }
     </style>
@@ -102,9 +194,77 @@
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
+        const telemetryState = { initialized: false, posthogEnabled: false, sentryEnabled: false };
 
-        // Custom Minimalist Brutalist Icon Set
-        const Icon = ({ name, size = 24, className = "", strokeWidth = 2.5, color = "currentColor" }) => {
+        async function initializeTelemetry() {
+            if (telemetryState.initialized) return;
+            telemetryState.initialized = true;
+            try {
+                const res = await fetch('/api/public-config');
+                const json = await res.json();
+                const cfg = json?.result || {};
+
+                if (window.posthog && cfg.posthogKey) {
+                    window.posthog.init(cfg.posthogKey, {
+                        api_host: cfg.posthogHost || 'https://us.i.posthog.com',
+                        autocapture: true,
+                        persistence: 'localStorage+cookie',
+                        capture_pageview: true
+                    });
+                    telemetryState.posthogEnabled = true;
+                }
+
+                if (window.Sentry && cfg.sentryDsn) {
+                    window.Sentry.init({
+                        dsn: cfg.sentryDsn,
+                        tracesSampleRate: 0.1
+                    });
+                    telemetryState.sentryEnabled = true;
+                }
+            } catch (error) {
+                console.warn('Telemetry init failed', error);
+            }
+        }
+
+        function captureEvent(name, props = {}) {
+            try {
+                if (telemetryState.posthogEnabled && window.posthog) {
+                    window.posthog.capture(name, props);
+                }
+            } catch {
+                // silent
+            }
+        }
+
+        function patchFetchAuthAndObservability() {
+            if (window.__spkFetchPatched) return;
+            window.__spkFetchPatched = true;
+            const nativeFetch = window.fetch.bind(window);
+            window.fetch = async (input, init = {}) => {
+                const authToken = localStorage.getItem('spkAuthToken') || '';
+                const headers = new Headers(init.headers || {});
+                if (authToken && !headers.has('Authorization')) {
+                    headers.set('Authorization', `Bearer ${authToken}`);
+                }
+                const startedAt = Date.now();
+                try {
+                    const response = await nativeFetch(input, { ...init, headers });
+                    const path = typeof input === 'string' ? input : (input?.url || '');
+                    if (path.startsWith('/api/')) {
+                        captureEvent('api_call', { path, status: response.status, durationMs: Date.now() - startedAt });
+                    }
+                    return response;
+                } catch (error) {
+                    const path = typeof input === 'string' ? input : (input?.url || '');
+                    captureEvent('api_error', { path, durationMs: Date.now() - startedAt });
+                    if (telemetryState.sentryEnabled && window.Sentry) window.Sentry.captureException(error);
+                    throw error;
+                }
+            };
+        }
+
+        // Legacy icon paths are retained for backwards-compatible source history; the UI now uses Phosphor.
+        const LegacyIcon = ({ name, size = 24, className = "", strokeWidth = 2.5, color = "currentColor" }) => {
             const paths = {
                 folder: <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />,
                 terminal: <><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></>,
@@ -155,14 +315,72 @@
             );
         };
 
+        const PHOSPHOR_ICON_NAMES = {
+            folder: 'folder-simple',
+            terminal: 'terminal',
+            settings: 'gear',
+            trash: 'trash',
+            monitor: 'desktop',
+            power: 'power',
+            wifi: 'wifi-high',
+            battery: 'battery-high',
+            sun: 'sun',
+            moon: 'moon',
+            edit: 'note-pencil',
+            file: 'file',
+            download: 'download-simple',
+            save: 'floppy-disk',
+            pen: 'pen-nib',
+            type: 'text-t',
+            eraser: 'eraser',
+            pencil: 'pencil-simple',
+            chevronRight: 'caret-right',
+            arrowLeft: 'arrow-left',
+            cloud: 'cloud',
+            camera: 'camera',
+            globe: 'globe',
+            reload: 'arrow-clockwise',
+            music: 'music-notes',
+            dvd: 'disc',
+            calendar: 'calendar-dots',
+            sports: 'soccer-ball',
+            research: 'file-text',
+            map: 'map-trifold',
+            calculator: 'calculator',
+            sigma: 'sigma',
+            code: 'code',
+            news: 'newspaper',
+            stock: 'chart-line-up',
+            gita: 'book-open-text',
+            mahabharat: 'crown-simple',
+            ramayan: 'book-open-text',
+            wallpaper: 'image',
+            gamepad: 'game-controller',
+            drive: 'hard-drives',
+            search: 'magnifying-glass',
+            chevronDown: 'caret-down',
+            close: 'x'
+        };
+
+        const Icon = ({ name, size = 24, className = "", color = "currentColor" }) => (
+            <i
+                aria-hidden="true"
+                className={`ph-bold ph-${PHOSPHOR_ICON_NAMES[name] || name} ${className}`}
+                style={{ fontSize: `${size}px`, color, lineHeight: 1 }}
+            />
+        );
+
         function App() {
             const [time, setTime] = useState(new Date());
             const [menuOpen, setMenuOpen] = useState(false);
+            const [launcherOpen, setLauncherOpen] = useState(true);
+            const [launcherQuery, setLauncherQuery] = useState('');
             const [isDark, setIsDark] = useState(false);
             const [username, setUsername] = useState('USER');
             const [showNamePopup, setShowNamePopup] = useState(false);
             const [bootLoading, setBootLoading] = useState(true);
             const [bootProgress, setBootProgress] = useState(0);
+            const launcherInputRef = useRef(null);
 
             const [fileSystem, setFileSystem] = useState({
                 'Documents': {
@@ -186,9 +404,9 @@
                 mahabharat: { isOpen: false, isFocused: false, isMinimized: false },
                 ramayan: { isOpen: false, isFocused: false, isMinimized: false },
                 system: { isOpen: false, isFocused: false, isMinimized: false },
-                console: { isOpen: false, isFocused: false, isMinimized: false },
+                console: { isOpen: true, isFocused: false, isMinimized: true },
                 settings: { isOpen: false, isFocused: false, isMinimized: false },
-                notepad: { isOpen: false, isFocused: false, isMinimized: false },
+                notepad: { isOpen: true, isFocused: false, isMinimized: true },
                 weather: { isOpen: false, isFocused: false, isMinimized: false },
                 camera: { isOpen: false, isFocused: false, isMinimized: false },
                 browser: { isOpen: false, isFocused: false, isMinimized: false },
@@ -196,8 +414,8 @@
                 suredbits: { isOpen: false, isFocused: false, isMinimized: false },
                 arxiv: { isOpen: false, isFocused: false, isMinimized: false },
                 liveMap: { isOpen: false, isFocused: false, isMinimized: false },
-                calculator: { isOpen: false, isFocused: false, isMinimized: false },
-                mathSolver: { isOpen: false, isFocused: false, isMinimized: false },
+                calculator: { isOpen: true, isFocused: false, isMinimized: true },
+                mathSolver: { isOpen: true, isFocused: false, isMinimized: true },
                 compiler: { isOpen: false, isFocused: false, isMinimized: false },
                 liveNews: { isOpen: false, isFocused: false, isMinimized: false },
                 liveNewsReader: { isOpen: false, isFocused: false, isMinimized: false },
@@ -215,7 +433,7 @@
             });
             const [newsReaderState, setNewsReaderState] = useState({ loading: false, error: '', item: null, pages: [], page: 0 });
             const [arxivReaderState, setArxivReaderState] = useState({ loading: false, error: '', item: null, pages: [], page: 0 });
-            const [wallpaperTheme, setWallpaperTheme] = useState('spiderman');
+            const [wallpaperTheme, setWallpaperTheme] = useState('sparky');
             const [viewport, setViewport] = useState({
                 width: typeof window !== 'undefined' ? window.innerWidth : 1440,
                 height: typeof window !== 'undefined' ? window.innerHeight : 900
@@ -250,7 +468,19 @@
                 return () => window.removeEventListener('resize', onResize);
             }, []);
 
+            useEffect(() => {
+                initializeTelemetry();
+                patchFetchAuthAndObservability();
+            }, []);
+
+            useEffect(() => {
+                if (bootLoading || showNamePopup || !launcherOpen) return;
+                const frame = requestAnimationFrame(() => launcherInputRef.current?.focus());
+                return () => cancelAnimationFrame(frame);
+            }, [bootLoading, showNamePopup, launcherOpen]);
+
             const toggleWindow = (id) => {
+                captureEvent('app_open', { appId: id, source: 'desktop_or_menu' });
                 setWindows(prev => ({
                     ...prev,
                     [id]: { ...prev[id], isOpen: !prev[id].isOpen, isFocused: !prev[id].isOpen, isMinimized: false }
@@ -272,6 +502,7 @@
             };
 
             const handleTaskbarClick = (id) => {
+                captureEvent('app_open', { appId: id, source: 'taskbar' });
                 setWindows(prev => {
                     const next = { ...prev };
                     const win = next[id];
@@ -384,6 +615,13 @@
             };
 
             const wallpaperPresets = {
+                sparky: {
+                    name: 'Sparky Burst',
+                    style: {
+                        image: 'url("/assets/wallpapers/spark-burst.png")',
+                        title: 'SPARKY MODE'
+                    }
+                },
                 spiderman: {
                     name: 'Spiderman',
                     style: {
@@ -415,9 +653,73 @@
             // Safely calculate the right-side position for the Kernel App
             const getRightSideX = () => typeof window !== 'undefined' ? Math.max(120, window.innerWidth - 480) : 500;
 
+            const appCatalog = [
+                { id: 'console', label: 'Console', description: 'Local terminal', icon: 'terminal', color: 'bg-[#00D9F5]' },
+                { id: 'calculator', label: 'Calculator', description: 'Quick calculations', icon: 'calculator', color: 'bg-[#FFD447]' },
+                { id: 'notepad', label: 'Notepad', description: 'Write and sketch', icon: 'edit', color: 'bg-[#FF6B67]' },
+                { id: 'mathSolver', label: 'Math Solver', description: 'Step-by-step answers', icon: 'sigma', color: 'bg-[#B99AF4]' },
+                { id: 'aiKernel', label: 'AI Kernel', description: 'Ask Sparky for help', icon: 'monitor', color: 'bg-[#80FF72]' },
+                { id: 'liveStocks', label: 'Live Data', description: 'Markets and signals', icon: 'stock', color: 'bg-[#B9FF6E]' },
+                { id: 'system', label: 'System', description: 'Files and folders', icon: 'folder', color: 'bg-[#FF90E8]' },
+                { id: 'settings', label: 'Settings', description: 'Personalize your desk', icon: 'settings', color: 'bg-[#FFD447]' },
+                { id: 'browser', label: 'Browser', description: 'Explore the web', icon: 'globe', color: 'bg-[#B388FF]' },
+                { id: 'camera', label: 'Camera', description: 'Capture a photo', icon: 'camera', color: 'bg-[#D1D5DB]' },
+                { id: 'music', label: 'Music', description: 'Play your library', icon: 'music', color: 'bg-[#8ED8FF]' },
+                { id: 'calendar', label: 'Calendar', description: 'Plan your week', icon: 'calendar', color: 'bg-[#4FD1C5]' },
+                { id: 'liveNews', label: 'Live News', description: 'Read current stories', icon: 'news', color: 'bg-[#FFC08A]' },
+                { id: 'liveMap', label: 'Live Map', description: 'Explore places', icon: 'map', color: 'bg-[#7EC8FF]' },
+                { id: 'compiler', label: 'Compiler', description: 'Run code safely', icon: 'code', color: 'bg-[#7EEBFF]' },
+                { id: 'arxiv', label: 'Research', description: 'Find papers', icon: 'research', color: 'bg-[#FF8A8A]' },
+                { id: 'suredbits', label: 'Live Sports', description: 'Scores and fixtures', icon: 'sports', color: 'bg-[#7CFC8A]' },
+                { id: 'gita', label: 'Gita', description: 'Read chapters', icon: 'gita', color: 'bg-[#FFD0A8]' },
+                { id: 'mahabharat', label: 'Mahabharat', description: 'Read the epic', icon: 'mahabharat', color: 'bg-[#FFD3A8]' },
+                { id: 'ramayan', label: 'Ramayan', description: 'Read the epic', icon: 'ramayan', color: 'bg-[#FFC8D4]' },
+                { id: 'animeBook', label: 'Anime Book', description: 'Browse stories', icon: 'file', color: 'bg-[#C5B0FF]' },
+                { id: 'virtualPC', label: 'Virtual PC', description: 'Play and experiment', icon: 'gamepad', color: 'bg-[#A8FFD8]' },
+                { id: 'weather', label: 'Weather', description: 'Check conditions', icon: 'cloud', color: 'bg-white' },
+                { id: 'dvd', label: 'DVD', description: 'Play video', icon: 'dvd', color: 'bg-[#FFE1A8]' },
+                { id: 'dev', label: 'App Drive', description: 'Browse every tool', icon: 'drive', color: 'bg-[#FF6B67]' }
+            ];
+
+            const launcherSuggestions = [
+                { ...appCatalog.find((app) => app.id === 'aiKernel'), action: 'Open AI Kernel', color: 'bg-[#00D9F5]' },
+                { ...appCatalog.find((app) => app.id === 'notepad'), action: 'Write a note' },
+                { ...appCatalog.find((app) => app.id === 'mathSolver'), action: 'Solve a problem' },
+                { ...appCatalog.find((app) => app.id === 'liveStocks'), action: 'Explore live data' }
+            ];
+
+            const visibleLauncherApps = launcherQuery.trim()
+                ? appCatalog.filter((app) => `${app.label} ${app.description}`.toLowerCase().includes(launcherQuery.trim().toLowerCase())).slice(0, 8)
+                : launcherSuggestions;
+
+            const runningApps = appCatalog.filter((app) => app.id !== 'console' && windows[app.id]?.isOpen);
+            const consoleIsRunning = windows.console?.isOpen;
+
+            const launchApp = (id) => {
+                focusWindow(id);
+                setLauncherOpen(false);
+                setLauncherQuery('');
+            };
+
+            const closeApp = (id) => {
+                setWindows((prev) => ({ ...prev, [id]: { ...prev[id], isOpen: false, isFocused: false, isMinimized: false } }));
+            };
+
+            const handleLauncherKeyDown = (event) => {
+                if (event.key === 'Escape') {
+                    setLauncherOpen(false);
+                    return;
+                }
+                if (event.key === 'Enter' && visibleLauncherApps[0]) {
+                    launchApp(visibleLauncherApps[0].id);
+                }
+            };
+
             return (
-                <div className={`h-screen w-full ${theme.bg} overflow-hidden flex flex-col ${theme.text} font-bold selection:bg-[#FF90E8] selection:text-black relative transition-colors duration-300`}
-                    style={{ backgroundImage: `radial-gradient(${theme.gridColor} 1px, transparent 1px)`, backgroundSize: '20px 20px' }}>
+                <div
+                    className={`sp-desktop h-screen w-full overflow-hidden flex flex-col ${theme.text} font-semibold selection:bg-[#FF90E8] selection:text-black relative transition-colors duration-300`}
+                    style={{ backgroundImage: wallpaperPresets[wallpaperTheme]?.style?.image || wallpaperPresets.sparky.style.image }}
+                >
 
                     {bootLoading && (
                         <div className="absolute inset-0 z-[100001] bg-black flex items-center justify-center px-4">
@@ -471,46 +773,117 @@
                     )}
 
                     {/* Desktop Workspace */}
-                    <div className={`flex-1 overflow-hidden ${viewport.width <= 1024 ? 'p-2' : 'p-6'} relative`} onClick={() => setMenuOpen(false)}>
-                        <div
-                            className={`absolute ${viewport.width <= 1024 ? 'right-2 top-2' : 'right-8 top-8'} w-[60%] h-[60%] border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] pointer-events-none opacity-85`}
-                            style={{
-                                backgroundColor: '#dbeafe',
-                                backgroundImage: wallpaperPresets[wallpaperTheme]?.style?.image || wallpaperPresets.spiderman.style.image,
-                                backgroundSize: 'contain',
-                                backgroundPosition: 'center',
-                                backgroundRepeat: 'no-repeat'
-                            }}
-                        >
-                            <div className="absolute top-4 left-4 px-3 py-1 border-2 border-black bg-white text-[10px] font-black uppercase tracking-wider">
-                                {wallpaperPresets[wallpaperTheme]?.style?.title || 'SPIDERMAN MODE'}
-                            </div>
+                    <div className="flex-1 overflow-hidden relative" onClick={() => setMenuOpen(false)}>
+                        <aside className="sp-pinned-rail absolute left-5 top-5 bottom-[104px] z-30 w-[116px] bg-[#171717] border-[3px] border-black px-3 py-4 flex flex-col gap-3 shadow-[5px_5px_0_0_rgba(0,0,0,0.35)]" aria-label="Pinned apps">
+                            {[
+                                { id: 'console', label: 'Console' },
+                                { id: 'notepad', label: 'Notepad' },
+                                { id: 'calculator', label: 'Calculator' },
+                                { id: 'mathSolver', label: 'Math Solver' },
+                                { id: 'liveStocks', label: 'Live Data' }
+                            ].map((pinned) => {
+                                const app = appCatalog.find((item) => item.id === pinned.id);
+                                const isActive = windows[pinned.id]?.isFocused && !windows[pinned.id]?.isMinimized;
+                                return (
+                                    <button
+                                        key={pinned.id}
+                                        type="button"
+                                        aria-label={`Open ${pinned.label}`}
+                                        aria-pressed={isActive}
+                                        onClick={(event) => { event.stopPropagation(); launchApp(pinned.id); }}
+                                    className="group min-h-[113px] flex flex-col items-center justify-center gap-2 text-white"
+                                >
+                                        <span className={`${app.color} w-16 h-16 border-[3px] border-black flex items-center justify-center text-black transition-transform group-hover:-translate-y-1 ${isActive ? 'outline outline-4 outline-white' : ''}`}>
+                                            <Icon name={app.icon} size={32} color="#111" />
+                                        </span>
+                                        <span className="sp-rail-label sp-display text-xs uppercase tracking-tight leading-[1.05] text-center">{pinned.label}</span>
+                                    </button>
+                                );
+                            })}
+                            <button
+                                type="button"
+                                onClick={(event) => { event.stopPropagation(); launchApp('dev'); }}
+                                className="mt-auto min-h-12 border-t border-white/40 pt-3 flex flex-col items-center justify-center gap-1 text-white"
+                            >
+                                <Icon name="chevronDown" size={22} />
+                                <span className="sp-all-apps-label text-[9px] uppercase tracking-wider">All apps</span>
+                            </button>
+                        </aside>
+
+                        <div className="absolute right-5 top-5 z-30 flex items-stretch bg-[#FFFDF8] border-[3px] border-black shadow-[4px_4px_0_0_rgba(0,0,0,0.25)] text-black">
+                            <span className="w-14 flex items-center justify-center border-r-[3px] border-black" aria-label="Wi-Fi connected"><Icon name="wifi" size={23} /></span>
+                            <span className="w-14 flex items-center justify-center border-r-[3px] border-black" aria-label="Battery charged"><Icon name="battery" size={23} /></span>
+                            <span className="sp-system-tray-date sp-display px-5 py-3 flex items-center border-r-[3px] border-black text-sm uppercase whitespace-nowrap">
+                                {time.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' })}
+                            </span>
+                            <span className="sp-display px-5 py-3 flex items-center bg-[#00D9F5] text-sm whitespace-nowrap">
+                                {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
                         </div>
-                        {/* Draggable Desktop Icons */}
-                        <DesktopIcon name="folder" label="System" bgColor="bg-[#FF90E8]" onDoubleClick={() => focusWindow('system')} theme={theme} initPos={iconGridPos(0)} />
-                        <DesktopIcon name="terminal" label="Console" bgColor="bg-[#00E5FF]" onDoubleClick={() => focusWindow('console')} theme={theme} initPos={iconGridPos(1)} />
-                        <DesktopIcon name="settings" label="Settings" bgColor="bg-[#FFDE59]" onDoubleClick={() => focusWindow('settings')} theme={theme} initPos={iconGridPos(2)} />
-                        <DesktopIcon name="camera" label="Camera" bgColor="bg-gray-300" onDoubleClick={() => focusWindow('camera')} theme={theme} initPos={iconGridPos(3)} />
-                        <DesktopIcon name="music" label="Music" bgColor="bg-[#8ED8FF]" onDoubleClick={() => focusWindow('music')} theme={theme} initPos={iconGridPos(4)} />
-                        <DesktopIcon name="edit" label="Notepad" bgColor="bg-[#FF6B6B]" onDoubleClick={() => focusWindow('notepad')} theme={theme} initPos={iconGridPos(5)} />
-                        <DesktopIcon name="cloud" label="Weather" bgColor="bg-white" onDoubleClick={() => focusWindow('weather')} theme={theme} initPos={iconGridPos(6)} />
-                        <DesktopIcon name="globe" label="Browser" bgColor="bg-[#B388FF]" onDoubleClick={() => focusWindow('browser')} theme={theme} initPos={iconGridPos(7)} />
-                        <DesktopIcon name="monitor" label="AI Kernel" bgColor="bg-[#80FF72]" onDoubleClick={() => focusWindow('aiKernel')} theme={theme} initPos={iconGridPos(8)} />
-                        <DesktopIcon name="dvd" label="DVD" bgColor="bg-[#FFE1A8]" onDoubleClick={() => focusWindow('dvd')} theme={theme} initPos={iconGridPos(9)} />
-                        <DesktopIcon name="calendar" label="Calendar" bgColor="bg-[#4FD1C5]" onDoubleClick={() => focusWindow('calendar')} theme={theme} initPos={iconGridPos(10)} />
-                        <DesktopIcon name="gita" label="Gita" bgColor="bg-[#FFD0A8]" onDoubleClick={() => focusWindow('gita')} theme={theme} initPos={iconGridPos(11)} />
-                        <DesktopIcon name="file" label="Anime Book" bgColor="bg-[#C5B0FF]" onDoubleClick={() => focusWindow('animeBook')} theme={theme} initPos={iconGridPos(12)} />
-                        <DesktopIcon name="sports" label="Live Sports" bgColor="bg-[#7CFC8A]" onDoubleClick={() => focusWindow('suredbits')} theme={theme} initPos={iconGridPos(13)} />
-                        <DesktopIcon name="research" label="Research" bgColor="bg-[#FF8A8A]" onDoubleClick={() => focusWindow('arxiv')} theme={theme} initPos={iconGridPos(14)} />
-                        <DesktopIcon name="map" label="Live Map" bgColor="bg-[#7EC8FF]" onDoubleClick={() => focusWindow('liveMap')} theme={theme} initPos={iconGridPos(15)} />
-                        <DesktopIcon name="sigma" label="Math Solver" bgColor="bg-[#C8A2FF]" onDoubleClick={() => focusWindow('mathSolver')} theme={theme} initPos={iconGridPos(16)} />
-                        <DesktopIcon name="calculator" label="Calculator" bgColor="bg-[#FFD36E]" onDoubleClick={() => focusWindow('calculator')} theme={theme} initPos={iconGridPos(17)} />
-                        <DesktopIcon name="news" label="Live News" bgColor="bg-[#FFC08A]" onDoubleClick={() => focusWindow('liveNews')} theme={theme} initPos={iconGridPos(18)} />
-                        <DesktopIcon name="code" label="Compiler" bgColor="bg-[#7EEBFF]" onDoubleClick={() => focusWindow('compiler')} theme={theme} initPos={iconGridPos(19)} />
-                        <DesktopIcon name="stock" label="Live Stocks" bgColor="bg-[#B9FF6E]" onDoubleClick={() => focusWindow('liveStocks')} theme={theme} initPos={iconGridPos(20)} />
-                        <DesktopIcon name="mahabharat" label="Mahabharat" bgColor="bg-[#FFD3A8]" onDoubleClick={() => focusWindow('mahabharat')} theme={theme} initPos={iconGridPos(21)} />
-                        <DesktopIcon name="ramayan" label="Ramayan" bgColor="bg-[#FFC8D4]" onDoubleClick={() => focusWindow('ramayan')} theme={theme} initPos={iconGridPos(22)} />
-                        <DesktopIcon name="gamepad" label="Virtual PC" bgColor="bg-[#A8FFD8]" onDoubleClick={() => focusWindow('virtualPC')} theme={theme} initPos={iconGridPos(23)} />
+
+                        <main className="sp-launcher-stage absolute inset-0 flex items-center justify-center p-6" aria-label="Desktop launcher">
+                            {launcherOpen ? (
+                                <section className="sp-launcher translate-y-4 bg-[#FFFDF8] border-[3px] border-black shadow-[10px_10px_0_0_#111] text-black" onClick={(event) => event.stopPropagation()}>
+                                    <header className="h-[52px] px-5 flex items-center justify-between bg-[#B99AF4] border-b-[3px] border-black">
+                                        <h1 className="sp-display text-xl md:text-2xl uppercase tracking-wide">SparkyPalOS</h1>
+                                        <button
+                                            type="button"
+                                            aria-label="Close launcher"
+                                            onClick={() => setLauncherOpen(false)}
+                                            className="w-8 h-8 bg-[#FF6B67] border-[3px] border-black flex items-center justify-center"
+                                        >
+                                            <Icon name="close" size={17} />
+                                        </button>
+                                    </header>
+
+                                    <div className="p-5 md:p-6">
+                                        <label className="sr-only" htmlFor="spark-launcher-search">Find an app or action</label>
+                                        <div className="sp-launcher-searchbox flex items-center gap-4 border-[3px] border-black bg-white px-5 min-h-[100px] shadow-[inset_0_0_0_3px_rgba(0,0,0,0.04)]">
+                                            <Icon name="search" size={42} color="#111" className="sp-search-icon shrink-0" />
+                                            <input
+                                                id="spark-launcher-search"
+                                                ref={launcherInputRef}
+                                                autoFocus
+                                                value={launcherQuery}
+                                                onChange={(event) => setLauncherQuery(event.target.value)}
+                                                onKeyDown={handleLauncherKeyDown}
+                                                placeholder="What do you want to do?"
+                                                className="sp-display min-w-0 flex-1 bg-transparent text-[40px] tracking-tight outline-none placeholder:text-black"
+                                            />
+                                        </div>
+
+                                        <div className="sp-launcher-results grid gap-3 mt-4" aria-live="polite">
+                                            {visibleLauncherApps.length ? visibleLauncherApps.map((app) => (
+                                                <button
+                                                    type="button"
+                                                    key={app.id}
+                                                    onClick={() => launchApp(app.id)}
+                                                    className="group min-h-[86px] bg-white border-[3px] border-black text-left flex flex-col justify-between hover:-translate-y-1 transition-transform"
+                                                >
+                                                    <span className="flex items-center gap-3 px-4 pt-4">
+                                                        <Icon name={app.icon} size={29} color="#111" className="shrink-0" />
+                                                        <span className="font-extrabold text-[15px] leading-tight">{app.action || app.label}</span>
+                                                    </span>
+                                                    <span className={`${app.color} h-3 w-full border-t-[3px] border-black`} aria-hidden="true"></span>
+                                                </button>
+                                            )) : (
+                                                <div className="col-span-full border-[3px] border-black bg-[#FFD447] px-4 py-5 font-extrabold uppercase">
+                                                    No matching tool. Try “notes”, “math”, or “live”.
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </section>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => setLauncherOpen(true)}
+                                    className="bg-[#B99AF4] border-[3px] border-black shadow-[7px_7px_0_0_#111] px-6 py-4 sp-display uppercase text-black flex items-center gap-3"
+                                >
+                                    <Icon name="search" size={24} /> Open launcher
+                                </button>
+                            )}
+                        </main>
 
                         {/* Windows - Utilizing proper boundary clamps so they never open off-screen. Fixed prefixes. */}
                         <Window id="dev" title="SparkyPal_App_Drive" headerColor="bg-[#FF6B6B]" icon="drive" isFocused={windows.dev.isFocused} isOpen={windows.dev.isOpen} isMinimized={windows.dev.isMinimized} onFocus={() => focusWindow('dev')} onClose={() => toggleWindow('dev')} onMinimize={() => minimizeWindow('dev')} initPos={{ x: getRightSideX(), y: 40 }} width="w-[700px]" theme={theme}>
@@ -635,74 +1008,63 @@
                         </Window>
                     </div>
 
-                    {/* Bottom Taskbar */}
-                    <div className={`h-[76px] shrink-0 ${theme.windowBg} border-t-4 ${theme.border} flex items-center justify-between px-6 relative z-[9999] transition-colors duration-300`}>
-                        {/* Start Menu */}
-                        {menuOpen && (
-                            <div className={`absolute bottom-[80px] left-6 w-72 ${theme.windowBg} border-4 ${theme.border} ${theme.shadowLarge} p-3 flex flex-col gap-2 animate-in slide-in-from-bottom-2 duration-150`}>
-                                <div className={`px-3 py-4 mb-2 border-4 ${theme.border} bg-[#00E5FF] flex items-center gap-3 ${theme.shadow}`}>
-                                    <div className={`w-12 h-12 border-2 ${theme.border} ${theme.windowBg} flex items-center justify-center shrink-0`}>
-                                        <Icon name="monitor" size={24} className={theme.text} />
+                    {/* Running App Strip */}
+                    <footer className="h-[92px] shrink-0 bg-[#FFFDF8] border-t-[3px] border-black flex items-center relative z-[9999] text-black">
+                        <button
+                            type="button"
+                            onClick={() => setLauncherOpen((open) => !open)}
+                            className="sp-running-label h-full w-[226px] px-7 shrink-0 flex items-center gap-4 border-r-[3px] border-black"
+                        >
+                            <span className="sp-display uppercase text-sm">Running</span>
+                            <Icon name="chevronDown" size={20} />
+                        </button>
+
+                        <div className="sp-running-list min-w-0 flex-1 flex items-center gap-4 overflow-x-auto h-full">
+                            {runningApps.length ? runningApps.map((app) => {
+                                const isFocused = windows[app.id]?.isFocused && !windows[app.id]?.isMinimized;
+                                return (
+                                    <div key={app.id} className={`h-[58px] min-w-[240px] border-[3px] border-black bg-white flex ${isFocused ? 'translate-y-[-3px] shadow-[4px_4px_0_0_#111]' : ''}`}>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleTaskbarClick(app.id)}
+                                            className="min-w-0 flex-1 flex items-center text-left"
+                                        >
+                                            <span className={`${app.color} w-14 h-full shrink-0 border-r-[3px] border-black flex items-center justify-center`}>
+                                                <Icon name={app.icon} size={26} color="#111" />
+                                            </span>
+                                            <span className="sp-display px-4 text-xs uppercase truncate">{app.label}</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            aria-label={`Close ${app.label}`}
+                                            onClick={() => closeApp(app.id)}
+                                            className="w-11 shrink-0 flex items-center justify-center hover:bg-[#FF6B67]"
+                                        >
+                                            <Icon name="close" size={18} />
+                                        </button>
                                     </div>
-                                    <div className="text-black overflow-hidden">
-                                        <div className="font-black text-lg uppercase truncate w-[140px]" title={username}>{username}</div>
-                                        <div className="text-sm font-bold opacity-80">ADMIN</div>
-                                    </div>
-                                </div>
-                                <MenuItem icon="drive" label="App" bgColor="bg-[#FF6B6B]" onClick={() => handleTaskbarClick('dev')} theme={theme} />
-                                <MenuItem icon="monitor" label="AI Kernel" bgColor="bg-[#80FF72]" onClick={() => handleTaskbarClick('aiKernel')} theme={theme} />
-                                <MenuItem icon="settings" label="Settings" bgColor="bg-[#FFDE59]" onClick={() => handleTaskbarClick('settings')} theme={theme} />
-                                <div className={`h-1 ${isDark ? 'bg-white' : 'bg-black'} my-2`}></div>
-                                <MenuItem icon="power" label="Shut Down" bgColor="bg-gray-300" onClick={() => window.location.reload()} theme={theme} />
-                            </div>
+                                );
+                            }) : (
+                                <span className="text-sm font-bold uppercase">Nothing running</span>
+                            )}
+                        </div>
+
+                        {consoleIsRunning && (
+                            <button
+                                type="button"
+                                onClick={() => handleTaskbarClick('console')}
+                                className="sp-running-preview h-full w-[348px] shrink-0 border-l-[3px] border-black bg-[#DCEEFF] px-5 flex items-center gap-4 text-left"
+                            >
+                                <span className="w-[142px] h-[50px] shrink-0 bg-[#101010] border-[3px] border-black px-3 py-2 text-[#80FF72] sp-mono text-[8px] leading-[1.25] overflow-hidden" aria-hidden="true">
+                                    USER@SPARKY:~$ status<br />kernel online<br />4 apps running
+                                </span>
+                                <span className="min-w-0">
+                                    <strong className="sp-display block text-xs uppercase truncate">Console</strong>
+                                    <span className="block text-xs mt-1 truncate">Local terminal</span>
+                                </span>
+                            </button>
                         )}
-
-                        {/* Taskbar Left Elements (Start Button, Separator, FIXED Kernel, and Open Apps) */}
-                        <div className="flex items-center gap-3">
-                            <button onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
-                                className={`w-12 h-12 flex items-center justify-center shrink-0 border-4 ${theme.border} transition-all ${menuOpen ? `bg-[#00E5FF] shadow-none translate-y-[4px] translate-x-[4px]` : `bg-[#00E5FF] ${theme.shadow} hover:translate-y-[2px] hover:translate-x-[2px] ${theme.shadowHover}`}`}
-                            >
-                                <Icon name="monitor" size={24} color="#000" strokeWidth={2.5} />
-                            </button>
-
-                            <div className={`w-1.5 h-8 ${isDark ? 'bg-white' : 'bg-black'} mx-1`}></div>
-
-                            {/* Pinned App Drive */}
-                            <button onClick={() => handleTaskbarClick('dev')}
-                                className={`w-12 h-12 flex items-center justify-center shrink-0 border-4 ${theme.border} transition-all ${windows.dev.isFocused && !windows.dev.isMinimized ? `bg-[#FF6B6B] shadow-none translate-y-[4px] translate-x-[4px]` : `bg-[#FF6B6B] ${theme.shadow} hover:translate-y-[2px] hover:translate-x-[2px] ${theme.shadowHover}`}`}
-                            >
-                                <Icon name="drive" size={24} color="#000" strokeWidth={2.5} />
-                            </button>
-
-                            {/* Dynamically Open Apps */}
-                            <div className="flex items-center gap-3 ml-1">
-                                {Object.keys(windows).map(key => {
-                                    if (key === 'dev') return null; // Handled explicitly above
-                                    if (key === 'viewer' && !windows.viewer.isOpen) return null;
-                                    const icons = { aiKernel: 'monitor', music: 'music', dvd: 'dvd', gita: 'gita', animeBook: 'file', animeReader: 'file', mahabharat: 'mahabharat', ramayan: 'ramayan', calendar: 'calendar', suredbits: 'sports', arxiv: 'research', arxivReader: 'research', liveMap: 'map', calculator: 'calculator', mathSolver: 'sigma', compiler: 'code', liveNews: 'news', liveNewsReader: 'news', liveStocks: 'stock', virtualPC: 'gamepad', system: 'folder', console: 'terminal', notepad: 'edit', weather: 'cloud', camera: 'camera', browser: 'globe', settings: 'settings', viewer: 'file' };
-                                    const colors = { aiKernel: 'bg-[#80FF72]', music: 'bg-[#8ED8FF]', dvd: 'bg-[#FFE1A8]', gita: 'bg-[#FFD0A8]', animeBook: 'bg-[#C5B0FF]', animeReader: 'bg-[#B7A4FF]', mahabharat: 'bg-[#FFD3A8]', ramayan: 'bg-[#FFC8D4]', calendar: 'bg-[#4FD1C5]', suredbits: 'bg-[#7CFC8A]', arxiv: 'bg-[#FF8A8A]', arxivReader: 'bg-[#FFB0B0]', liveMap: 'bg-[#7EC8FF]', calculator: 'bg-[#FFD36E]', mathSolver: 'bg-[#C8A2FF]', compiler: 'bg-[#7EEBFF]', liveNews: 'bg-[#FFC08A]', liveNewsReader: 'bg-[#FFB48A]', liveStocks: 'bg-[#B9FF6E]', virtualPC: 'bg-[#A8FFD8]', system: 'bg-[#FF90E8]', console: 'bg-[#00E5FF]', notepad: 'bg-[#FF6B6B]', weather: 'bg-white', camera: 'bg-gray-300', browser: 'bg-[#B388FF]', settings: 'bg-[#FFDE59]', viewer: 'bg-white' };
-                                    return (
-                                        <TaskbarIcon key={key} name={icons[key]} isOpen={windows[key].isOpen} isFocused={windows[key].isFocused && !windows[key].isMinimized} onClick={() => handleTaskbarClick(key)} activeColor={colors[key]} theme={theme} />
-                                    );
-                                })}
-                            </div>
-                        </div>
-
-                        {/* Taskbar Right: System Tray shifted firmly to the left (mr-16) to avoid any edge clipping */}
-                        <div className={`flex items-center gap-3 px-3 py-1.5 border-4 ${theme.border} ${theme.windowBg} ${theme.shadow} leading-none mb-1 mr-16`}>
-                            <Icon name="wifi" size={22} strokeWidth={3} className={theme.text} />
-                            <Icon name="battery" size={22} strokeWidth={3} className={theme.text} />
-                            <div className={`w-1.5 h-7 ${isDark ? 'bg-white' : 'bg-black'} mx-1`}></div>
-                            <div className="flex flex-col items-end justify-center cursor-pointer">
-                                <span className={`text-base font-black tracking-tighter ${theme.text}`}>
-                                    {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                </span>
-                                <span className={`text-[10px] font-black tracking-widest ${theme.text}`}>
-                                    {time.toLocaleDateString('en-GB')}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
+                    </footer>
                 </div>
             );
         }
@@ -768,7 +1130,7 @@
                             const winW = winRef.current?.offsetWidth || 360;
                             const winH = winRef.current?.offsetHeight || 260;
                             const clampedX = Math.min(Math.max(0, dragRef.current.lastX), Math.max(0, viewport.width - winW - 2));
-                            const clampedY = Math.min(Math.max(0, dragRef.current.lastY), Math.max(0, viewport.height - winH - 78));
+                            const clampedY = Math.min(Math.max(0, dragRef.current.lastY), Math.max(0, viewport.height - winH - 96));
                             setPos({ x: clampedX, y: clampedY });
                         }
                         dragRef.current = null;
@@ -802,7 +1164,7 @@
             return (
                 <div ref={winRef} onMouseDown={onFocus} onPointerDown={onFocus}
                     className={`sp-window absolute flex flex-col ${isMaximized ? '' : width} ${isMinimized ? 'hidden' : 'flex'} ${theme.windowBg} border-4 ${theme.border} transition-shadow ${isFocused ? `z-50 ${isMaximized ? '' : theme.shadowLarge}` : `z-10 ${isMaximized ? '' : theme.shadow}`}`}
-                    style={{ ...winStyle, maxWidth: compact ? 'calc(100vw - 10px)' : 'calc(100vw - 40px)', maxHeight: compact ? 'calc(100vh - 88px)' : 'calc(100vh - 120px)' }}>
+                    style={{ ...winStyle, maxWidth: compact ? 'calc(100vw - 10px)' : 'calc(100vw - 40px)', maxHeight: compact ? 'calc(100vh - 104px)' : 'calc(100vh - 132px)' }}>
                     <div
                         onPointerDown={handlePointerDown}
                         onDoubleClick={() => setIsMaximized(!isMaximized)}
@@ -814,9 +1176,9 @@
                             <span className="font-black text-sm tracking-widest uppercase truncate">{title}</span>
                         </div>
                         <div className="flex gap-2 shrink-0">
-                            <button onClick={(e) => { e.stopPropagation(); onMinimize(); }} className={`w-5 h-5 rounded-none bg-[#FFDE59] border-2 border-black hover:bg-white`}></button>
-                            <button onClick={(e) => { e.stopPropagation(); setIsMaximized(!isMaximized); }} className={`w-5 h-5 rounded-none bg-[#00E5FF] border-2 border-black hover:bg-white`}></button>
-                            <button onClick={(e) => { e.stopPropagation(); onClose(); }} className={`w-5 h-5 rounded-none bg-[#FF6B6B] border-2 border-black hover:bg-white flex items-center justify-center`}>
+                            <button type="button" aria-label={`Minimize ${title}`} onClick={(e) => { e.stopPropagation(); onMinimize(); }} className={`w-5 h-5 rounded-none bg-[#FFDE59] border-2 border-black hover:bg-white`}></button>
+                            <button type="button" aria-label={`${isMaximized ? 'Restore' : 'Maximize'} ${title}`} onClick={(e) => { e.stopPropagation(); setIsMaximized(!isMaximized); }} className={`w-5 h-5 rounded-none bg-[#00E5FF] border-2 border-black hover:bg-white`}></button>
+                            <button type="button" aria-label={`Close ${title}`} onClick={(e) => { e.stopPropagation(); onClose(); }} className={`w-5 h-5 rounded-none bg-[#FF6B6B] border-2 border-black hover:bg-white flex items-center justify-center`}>
                                 <span className="text-black text-xs font-black leading-none mb-[2px]">X</span>
                             </button>
                         </div>
@@ -1268,10 +1630,12 @@
                     const data = await sessionRes.json();
                     const sid = data.sessionId || '';
                     setSessionId(sid);
+                    captureEvent('ai_session_ready', { ok: true });
                     return sid;
                 } catch (e) {
                     setBackendOk(false);
                     setError('Backend unavailable. Start server with: npm start');
+                    captureEvent('ai_session_ready', { ok: false });
                     return '';
                 }
             };
@@ -1312,11 +1676,13 @@
                         } catch {
                             // Ignore malformed chunks.
                         }
+                        captureEvent('chat_stream_success', { degraded: false });
                         eventSource.close();
                         resolve(finalText);
                     });
 
                     eventSource.addEventListener('error', () => {
+                        captureEvent('chat_stream_error');
                         eventSource.close();
                         reject(new Error('stream failed'));
                     });
@@ -1340,6 +1706,7 @@
             const sendPrompt = async () => {
                 const prompt = input.trim();
                 if (!prompt || isStreaming) return;
+                captureEvent('chat_send', { mode: 'stream-preferred' });
 
                 if (!backendOk) {
                     setError('Backend not connected. Run npm start in this folder.');
@@ -1360,6 +1727,7 @@
                 try {
                     await streamPrompt(activeSessionId, prompt);
                 } catch {
+                    captureEvent('chat_stream_fallback', { degraded: true });
                     try {
                         const fallbackText = await fallbackPrompt(activeSessionId, prompt);
                         setLastAssistant(fallbackText);
@@ -3003,10 +3371,11 @@
                     <div className={`p-4 border-4 ${theme.border} bg-white text-black`}>
                         <div className="font-black uppercase text-sm mb-2">Wallpaper Profile</div>
                         <div className="flex flex-wrap gap-2">
+                            <button onClick={() => setWallpaperTheme('sparky')} className={`px-3 py-2 border-2 border-black text-xs font-black uppercase ${wallpaperTheme === 'sparky' ? 'bg-[#00D9F5]' : 'bg-white'}`}>Sparky Burst</button>
                             <button onClick={() => setWallpaperTheme('spiderman')} className={`px-3 py-2 border-2 border-black text-xs font-black uppercase ${wallpaperTheme === 'spiderman' ? 'bg-[#FFDE59]' : 'bg-[#FF90E8]'}`}>Spiderman</button>
                             <button onClick={() => setWallpaperTheme('naruto')} className={`px-3 py-2 border-2 border-black text-xs font-black uppercase ${wallpaperTheme === 'naruto' ? 'bg-[#FFDE59]' : 'bg-[#FFE1A8]'}`}>Naruto</button>
                         </div>
-                        <div className="mt-3 text-[11px] font-black uppercase">Default theme: Spiderman. Optional theme: Naruto. Desktop starts in 5x6 icon layout; drag icons freely after launch.</div>
+                        <div className="mt-3 text-[11px] font-black uppercase">Default theme: Sparky Burst. Use the launcher or pinned rail to open apps.</div>
                     </div>
                 </div>
             );

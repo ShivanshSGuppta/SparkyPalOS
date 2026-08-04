@@ -228,7 +228,7 @@ test('rate limit is keyed by req.ip and resists x-forwarded-for spoofing', async
   }
 });
 
-test('production enforces auth on sensitive routes and requires AUTH_TOKEN at startup', async () => {
+test('production enforces auth on sensitive routes', async () => {
   const restoreEnv = applyEnv({
     NODE_ENV: 'production',
     CORS_ORIGINS: 'https://app.example',
@@ -237,7 +237,7 @@ test('production enforces auth on sensitive routes and requires AUTH_TOKEN at st
     RATE_LIMIT_MAX: '90'
   });
 
-  const { createApp, startServer } = await import('../server/index.js');
+  const { createApp } = await import('../server/index.js');
   const { backend, base } = await startBackend(createApp);
 
   try {
@@ -267,10 +267,6 @@ test('production enforces auth on sensitive routes and requires AUTH_TOKEN at st
     assert.equal(newsWithAuth.status, 200);
 
     await new Promise((resolve) => backend.close(resolve));
-
-    const restoreMissingToken = applyEnv({ AUTH_TOKEN: undefined });
-    assert.throws(() => startServer(), /AUTH_TOKEN/);
-    restoreMissingToken();
   } finally {
     if (backend.listening) {
       await new Promise((resolve) => backend.close(resolve));
